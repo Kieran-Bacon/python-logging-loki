@@ -81,6 +81,42 @@ def test_extra_tag_added(emitter_v1):
     stream = get_stream(session)
     assert stream["stream"]["extra_tag"] == "extra_value"
 
+def test_default_metadata_added_to_payload(emitter_v1):
+    emitter, session = emitter_v1
+    emitter.metadata = {'example': 'value'}
+    emitter(create_record(), "msg")
+
+    stream = get_stream(session)
+    level = logging.getLevelName(record_kwargs["level"]).lower()
+    expected = {
+        emitter.level_tag: level,
+        emitter.logger_tag: record_kwargs["name"],
+    }
+    assert stream["stream"] == expected
+
+
+    _, msg, metadata = stream["values"][0]
+    assert msg == 'msg'
+    assert metadata == {'example': 'value'}
+
+def test_extra_metadata_added(emitter_v1):
+    emitter, session = emitter_v1
+    emitter.metadata = {'example': 'value', "overwritten": "gone"}
+    emitter(create_record(extra={"metadata": {"extra_metadata": "extra_value", "overwritten": "new"}}), "msg")
+
+    stream = get_stream(session)
+    level = logging.getLevelName(record_kwargs["level"]).lower()
+    expected = {
+        emitter.level_tag: level,
+        emitter.logger_tag: record_kwargs["name"],
+    }
+    assert stream["stream"] == expected
+
+
+    _, msg, metadata = stream["values"][0]
+    assert msg == 'msg'
+    assert metadata == {'example': 'value', 'extra_metadata': "extra_value", "overwritten": "new"}
+
 
 @pytest.mark.parametrize(
     "emitter_v1, label",

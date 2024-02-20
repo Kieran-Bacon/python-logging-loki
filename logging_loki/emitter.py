@@ -30,7 +30,13 @@ class LokiEmitter(abc.ABC):
     label_replace_with = const.label_replace_with
     session_class = requests.Session
 
-    def __init__(self, url: str, tags: Optional[dict] = None, auth: BasicAuth = None):
+    def __init__(
+        self,
+        url: str,
+        tags: Optional[dict] = None,
+        metadata: Optional[Dict[str, str]] = None,
+        auth: BasicAuth = None
+        ):
         """
         Create new Loki emitter.
 
@@ -42,6 +48,10 @@ class LokiEmitter(abc.ABC):
         """
         #: Tags that will be added to all records handled by this handler.
         self.tags = tags or {}
+        #: Structured metadata to add to the log lines
+        # Pre format label to avoid having to deep copy/format later
+        self.metadata = metadata or {}
+
         #: Loki JSON push endpoint (e.g `http://127.0.0.1/loki/api/v1/push`)
         self.url = url
         #: Optional tuple with username and password for basic authentication.
@@ -86,6 +96,18 @@ class LokiEmitter(abc.ABC):
             label = label.replace(char_from, char_to)
         return "".join(char for char in label if char in self.label_allowed_chars)
 
+    def standardise_extras_dict(self, raw_dict: Dict[str, Any]) -> Dict[str, Any]:
+
+        parsed_dict = {}
+        for tag_name, tag_value in raw_dict.items():
+            cleared_name = self.format_label(tag_name)
+            if cleared_name:
+                parsed_dict[cleared_name] = tag_value
+            else:
+                print(f'WARNING: Ignoring key {tag_name}')
+
+        return parsed_dict
+
     def build_tags(self, record: logging.LogRecord) -> Dict[str, Any]:
         """Return tags that must be send to Loki with a log record."""
         tags = dict(self.tags) if isinstance(self.tags, ConvertingDict) else self.tags
@@ -97,12 +119,19 @@ class LokiEmitter(abc.ABC):
         if not isinstance(extra_tags, dict):
             return tags
 
-        for tag_name, tag_value in extra_tags.items():
-            cleared_name = self.format_label(tag_name)
-            if cleared_name:
-                tags[cleared_name] = tag_value
+        tags.update(self.standardise_extras_dict(extra_tags))
 
         return tags
+
+    def build_metadata(self, record: logging.LogRecord) -> Dict[str, str]:
+
+        metadata = self.standardise_extras_dict(self.metadata)
+
+        extra_metadata = getattr(record, "metadata", {})
+        if extra_metadata:
+            return dict(metadata, **self.standardise_extras_dict(extra_metadata))
+
+        return metadata
 
 
 class LokiEmitterV0(LokiEmitter):
@@ -134,10 +163,11 @@ class LokiEmitterV1(LokiEmitter):
     def build_payload(self, record: logging.LogRecord, line) -> dict:
         """Build JSON payload with a log entry."""
         labels = self.build_tags(record)
+        metadata = self.build_metadata(record)
         ns = 1e9
         ts = str(int(time.time() * ns))
         stream = {
             "stream": labels,
-            "values": [[ts, line]],
+            "values": [[ts, line, metadata]],
         }
         return {"streams": [stream]}
