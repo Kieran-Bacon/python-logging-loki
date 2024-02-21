@@ -64,6 +64,9 @@ class LokiEmitter(abc.ABC):
         payload = self.build_payload(record, line)
         resp = self.session.post(self.url, json=payload)
         if resp.status_code != self.success_response_code:
+            if resp.status_code == 400:
+                raise ValueError(f"400 Bad request - payload must be incorrect: {payload}")
+
             raise ValueError("Unexpected Loki API response status code: {0}".format(resp.status_code))
 
     @abc.abstractmethod
