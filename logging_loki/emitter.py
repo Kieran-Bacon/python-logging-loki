@@ -48,6 +48,7 @@ class LokiEmitter(abc.ABC):
         """
         #: Tags that will be added to all records handled by this handler.
         self.tags = tags or {}
+        self.tags = dict(self.tags) if isinstance(self.tags, ConvertingDict) else self.tags
         #: Structured metadata to add to the log lines
         # Pre format label to avoid having to deep copy/format later
         self.metadata = metadata or {}
@@ -99,13 +100,13 @@ class LokiEmitter(abc.ABC):
             label = label.replace(char_from, char_to)
         return "".join(char for char in label if char in self.label_allowed_chars)
 
-    def standardise_extras_dict(self, raw_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def standardise_extras_dict(self, raw_dict: Dict[str, Any]) -> Dict[str, str]:
 
         parsed_dict = {}
         for tag_name, tag_value in raw_dict.items():
             cleared_name = self.format_label(tag_name)
             if cleared_name:
-                parsed_dict[cleared_name] = tag_value
+                parsed_dict[cleared_name] = str(tag_value)
             else:
                 print(f'WARNING: Ignoring key {tag_name}')
 
@@ -113,18 +114,15 @@ class LokiEmitter(abc.ABC):
 
     def build_tags(self, record: logging.LogRecord) -> Dict[str, Any]:
         """Return tags that must be send to Loki with a log record."""
-        tags = dict(self.tags) if isinstance(self.tags, ConvertingDict) else self.tags
-        tags = copy.deepcopy(tags)
-        tags[self.level_tag] = record.levelname.lower()
-        tags[self.logger_tag] = record.name
 
-        extra_tags = getattr(record, "tags", {})
-        if not isinstance(extra_tags, dict):
-            return tags
+        extra_tags = getattr(record, "tags", None)
 
-        tags.update(self.standardise_extras_dict(extra_tags))
 
-        return tags
+        return dict(
+            self.tags,
+            **{self.level_tag: record.levelname.lower(), self.logger_tag: record.name},
+            **(self.standardise_extras_dict(extra_tags) if isinstance(extra_tags, dict) else {})
+        )
 
     def build_metadata(self, record: logging.LogRecord) -> Dict[str, str]:
 
